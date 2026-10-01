@@ -161,6 +161,10 @@ public class ModelInit {
                     st.execute(createGames);
                     System.out.println("Ensured 'games' table exists");
 
+                    String createDirectMessageReadState = buildDirectMessageReadStateTableSql(conn);
+                    st.execute(createDirectMessageReadState);
+                    System.out.println("Ensured 'direct_message_read_state' table exists");
+
                     try {
                         long gameCount = 0L;
                         try { gameCount = gameJpaRepository.count(); } catch (Exception ignore) { gameCount = 0L; }
@@ -472,6 +476,21 @@ public class ModelInit {
                 + quoteIdentifier(connection, "success") + " INTEGER,"
                 + quoteIdentifier(connection, "details") + " TEXT,"
                 + quoteIdentifier(connection, "created_at") + " TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+                + ");";
+    }
+
+    private String buildDirectMessageReadStateTableSql(Connection connection) throws SQLException {
+        String idColumn = isMySqlDatabase(connection)
+            ? quoteIdentifier(connection, "id") + " BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY"
+            : quoteIdentifier(connection, "id") + " INTEGER PRIMARY KEY AUTOINCREMENT";
+
+        return "CREATE TABLE IF NOT EXISTS " + quoteIdentifier(connection, "direct_message_read_state") + " ("
+                + idColumn + ","
+                + quoteIdentifier(connection, "conversation_id") + " BIGINT,"
+                + quoteIdentifier(connection, "person_id") + " BIGINT,"
+                + quoteIdentifier(connection, "last_read_message_id") + " BIGINT,"
+                + "UNIQUE (" + quoteIdentifier(connection, "conversation_id") + ","
+                        + quoteIdentifier(connection, "person_id") + ")"
                 + ");";
     }
 }
