@@ -32,6 +32,10 @@ public class DirectMessageService {
     public static final int MIN_SEARCH_LENGTH = 2;
     public static final int MAX_SEARCH_LENGTH = 100;
     public static final int MAX_SEARCH_RESULTS = 50;
+    /** What a summary reads: the newest messages, each cut short, up to a total size. */
+    public static final int SUMMARY_MAX_MESSAGES = 80;
+    public static final int SUMMARY_LINE_CHARS = 400;
+    public static final int SUMMARY_MAX_CHARS = 12_000;
     /** How many database matches one search reads before checking their plain text. */
     private static final int SEARCH_CANDIDATE_LIMIT = 200;
 
@@ -329,5 +333,54 @@ public class DirectMessageService {
             }
         }
         return deduped;
+    }
+
+    /** A conversation's recent messages as "Name: text" lines, and how many lines that is. */
+    public record Transcript(String text, int messages) {
+    }
+
+    /**
+     * The newest messages of a conversation, oldest first, as plain text for a summary: deleted
+     * messages left out, markup removed, a photo with no text shown as "[photo]", each line cut
+     * to {@link #SUMMARY_LINE_CHARS} and the whole to {@link #SUMMARY_MAX_CHARS} (the oldest
+     * lines go first). Checking the caller belongs to the conversation happens here, in the
+     * same transaction that reads the people and messages.
+     * Throws {@link NoSuchElementException} for an unknown conversation and
+     * {@link SecurityException} when {@code person} is not in it.
+     */
+    @Transactional(readOnly = true)
+    public Transcript recentTranscript(Long conversationId, Person person) {
+        DirectMessageConversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new NoSuchElementException("Conversation not found"));
+        if (!isParticipant(conversation, person)) {
+            throw new SecurityException("Not a participant");
+        }
+        List<String> newestFirst = new ArrayList<>();
+        int size = 0;
+        List<DirectMessage> messages = getMessages(conversation);
+        for (int i = messages.size() - 1; i >= 0 && newestFirst.size() < SUMMARY_MAX_MESSAGES; i--) {
+            DirectMessage message = messages.get(i);
+            if (message.isDeleted()) {
+                continue;
+            }
+            String text = DirectMessageSearchText.plainText(message.getBody());
+            boolean hasImage = message.getImage() != null && !message.getImage().isBlank();
+            if (text.isBlank() && !hasImage) {
+                continue;
+            }
+            if (text.isBlank()) {
+                text = "[photo]";
+            } else if (text.length() > SUMMARY_LINE_CHARS) {
+                text = text.substring(0, SUMMARY_LINE_CHARS - 1).stripTrailing() + "\u2026";
+            }
+            String line = message.getSender().getName() + ": " + text;
+            if (size + line.length() + 1 > SUMMARY_MAX_CHARS) {
+                break;
+            }
+            size += line.length() + 1;
+            newestFirst.add(line);
+        }
+        java.util.Collections.reverse(newestFirst);
+        return new Transcript(String.join("\n", newestFirst), newestFirst.size());
     }
 }

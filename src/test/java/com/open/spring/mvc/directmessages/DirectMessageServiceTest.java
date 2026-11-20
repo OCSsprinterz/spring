@@ -47,6 +47,9 @@ class DirectMessageServiceTest {
         DirectMessageConversationJpaRepository conversationRepository = repositoryStub(
             DirectMessageConversationJpaRepository.class,
             (methodName, arguments) -> switch (methodName) {
+                case "findById" -> saved.stream()
+                    .filter(conversation -> conversation.getId().equals(arguments[0]))
+                    .findFirst();
                 case "findByParticipantsContaining" -> {
                     Person target = (Person) arguments[0];
                     yield saved.stream()
@@ -94,6 +97,9 @@ class DirectMessageServiceTest {
                     Collections.reverse(found);
                     yield found;
                 }
+                case "findByConversationOrderBySentAtAsc" -> savedMessages.stream()
+                    .filter(message -> message.getConversation() == arguments[0])
+                    .toList();
                 case "findTopByConversationOrderByIdDesc" -> savedMessages.stream()
                     .filter(message -> message.getConversation() == arguments[0])
                     .reduce((first, second) -> second);
@@ -350,6 +356,48 @@ class DirectMessageServiceTest {
         assertThrows(IllegalArgumentException.class, () -> service.searchMessages(alice, null));
         assertThrows(IllegalArgumentException.class,
             () -> service.searchMessages(alice, "x".repeat(DirectMessageService.MAX_SEARCH_LENGTH + 1)));
+    }
+
+    @Test
+    void aTranscriptIsTheRecentMessagesOldestFirstAsPlainText() {
+        DirectMessageConversation conversation = service.getOrCreateConversation(alice, List.of(bob));
+        service.postMessage(conversation, alice, "<p>Demo is on <b>Friday</b></p>");
+        DirectMessageEvent gone = service.postMessage(conversation, bob, "oops");
+        service.deleteMessage(conversation, bob, gone.getId());
+        service.postMessage(conversation, bob, "", "data:image/png;base64,AAAA");
+        service.postMessage(conversation, bob, "see you there");
+
+        DirectMessageService.Transcript transcript = service.recentTranscript(conversation.getId(), alice);
+
+        assertEquals("alice: Demo is on Friday\nbob: [photo]\nbob: see you there", transcript.text());
+        assertEquals(3, transcript.messages());
+    }
+
+    @Test
+    void aTranscriptKeepsOnlyTheNewestMessagesAndLimitsEachLine() {
+        DirectMessageConversation conversation = service.getOrCreateConversation(alice, List.of(bob));
+        for (int i = 1; i <= DirectMessageService.SUMMARY_MAX_MESSAGES + 5; i++) {
+            service.postMessage(conversation, alice, "m" + i);
+        }
+        service.postMessage(conversation, bob, "x".repeat(DirectMessageService.SUMMARY_LINE_CHARS * 2));
+
+        DirectMessageService.Transcript transcript = service.recentTranscript(conversation.getId(), bob);
+
+        assertEquals(DirectMessageService.SUMMARY_MAX_MESSAGES, transcript.messages());
+        assertFalse(transcript.text().contains("alice: m1\n"));
+        assertTrue(transcript.text().contains("alice: m" + (DirectMessageService.SUMMARY_MAX_MESSAGES + 5)));
+        String last = transcript.text().substring(transcript.text().lastIndexOf('\n') + 1);
+        assertTrue(last.length() <= "bob: ".length() + DirectMessageService.SUMMARY_LINE_CHARS);
+        assertTrue(transcript.text().length() <= DirectMessageService.SUMMARY_MAX_CHARS);
+    }
+
+    @Test
+    void aTranscriptIsOnlyForPeopleInTheConversation() {
+        DirectMessageConversation conversation = service.getOrCreateConversation(alice, List.of(bob));
+        service.postMessage(conversation, alice, "private");
+
+        assertThrows(SecurityException.class, () -> service.recentTranscript(conversation.getId(), carol));
+        assertThrows(NoSuchElementException.class, () -> service.recentTranscript(999L, alice));
     }
 
     private DirectMessageReadState readStateFor(DirectMessageConversation conversation, Person person) {
