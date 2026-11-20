@@ -115,6 +115,8 @@ public class DirectMessageSummaryApiController {
         }
         JsonNode json = parse(answer);
         if (json == null) {
+            String head = answer == null ? "null" : answer.substring(0, Math.min(answer.length(), 120)).replaceAll("\\s+", " ");
+            logger.warn("DM summary unreadable person={} length={} start={}", person.getId(), answer == null ? 0 : answer.length(), head);
             return error(502, "The AI's answer didn't make sense. Try again.");
         }
         Map<String, Object> cleaned = clean(json);
@@ -156,6 +158,7 @@ public class DirectMessageSummaryApiController {
             JsonNode node = mapper.readTree(answer.substring(start, end + 1));
             return node.isObject() ? node : null;
         } catch (Exception e) {
+            logger.warn("DM summary answer was not valid JSON: {}", e.getMessage());
             return null;
         }
     }
